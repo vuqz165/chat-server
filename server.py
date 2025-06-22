@@ -1,55 +1,30 @@
-import socket
-import threading
-import os
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 
-HOST = '0.0.0.0'
-PORT = int(os.environ.get("PORT", 5000))
-
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.bind((HOST, PORT))
-server.listen()
-
+app = FastAPI()
 clients = []
-clients_lock = threading.Lock()  # To safely edit client list
 
-def broadcast(message, sender):
-    with clients_lock:
-        for client in clients.copy():
-            if client != sender:
-                try:
-                    client.send(message)
-                except:
-                    try:
-                        client.close()
-                    except:
-                        pass
-                    if client in clients:
-                        clients.remove(client)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-def handle(client):
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    clients.append(websocket)
     try:
         while True:
-            msg = client.recv(1024)
-            if not msg:
-                break
-            broadcast(msg, client)
-    except:
-        pass
-    finally:
-        with clients_lock:
-            if client in clients:
-                clients.remove(client)
-        try:
-            client.close()
-        except:
-            pass
+            data = await websocket.receive_text()
+            for client in clients:
+                if client != websocket:
+                    await client.send_text(data)
+    except WebSocketDisconnect:
+        clients.remove(websocket)
 
-def receive():
-    print(f"Server started on {HOST}:{PORT}")
-    while True:
-        client, _ = server.accept()
-        with clients_lock:
-            clients.append(client)
-        threading.Thread(target=handle, args=(client,), daemon=True).start()
-
-receive()
+if __name__ == "__main__":
+    uvicorn.run("server:app", host="0.0.0.0", port=10000)
